@@ -3,12 +3,18 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "outDir": "./out-tsc/app",
-    "types": []
+    "types": [],
+    "paths": {
+      "ngx-reactome-diagram": ["mock/stubs/diagram/index.ts"],
+      "ngx-reactome-diagram/lib/model/diagram.model": ["mock/stubs/diagram/diagram.model.ts"],
+      "ngx-reactome-cytoscape-style": ["mock/stubs/cytoscape-style/index.ts"]
+    }
   },
   "files": [
     "./src/main.ts"
   ],
   "include": [
-    "src/**/*.d.ts"
+    "src/**/*.d.ts",
+    "mock/stubs/**/*.ts"
   ]
 }

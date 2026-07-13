@@ -1,0 +1,5 @@
+Curator mock login — create a browser bookmark whose URL is the single line below.
+One click seeds a long-lived token (HS512, sub=ralf) and opens the app already logged in.
+Re-click only if you clear browser storage.
+
+javascript:(function(){localStorage.setItem('token','eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJyYWxmIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjQxMDI0NDQ4MDB9.mock-signature');location.href='http://localhost:4200/';})()
