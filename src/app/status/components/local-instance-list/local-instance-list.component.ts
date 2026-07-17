@@ -194,14 +194,31 @@ export class UpdatedInstanceListComponent implements OnInit {
     }
     else if (this.newInstances.includes(instance)) {
       this.openCommitWaitDialog('Committing New Instance', 'Please wait while the selected new instance is committed.');
+      // Run the pre-commit duplication check for new instances (see shouldCheckForMatches).
+      if (!this.dataService.shouldCheckForMatches(instance)) {
+        this.doCommitInstance(instance).pipe(
+          finalize(() => this.closeCommitWaitDialog())
+        ).subscribe();
+        return;
+      }
       this.dataService.matchInstances(instance).pipe(
         concatMap(matches => {
           if (matches && matches.length > 0) {
+            // Close the "please wait" spinner before showing the interactive matches
+            // dialog. Otherwise the wait dialog (opened with disableClose + backdrop)
+            // stays stacked underneath, which blocks interactions in the matches dialog.
+            this.closeCommitWaitDialog();
             return this.matchedInstancesDialogService.openDialog({
               title: 'Matches Found',
               groups: [{ newInstance: instance, matches }]
             }).afterClosed().pipe(
-              concatMap(commitAnyway => commitAnyway ? this.doCommitInstance(instance) : EMPTY)
+              concatMap(selected => {
+                if (selected && selected.length > 0) {
+                  this.openCommitWaitDialog('Committing New Instance', 'Please wait while the selected new instance is committed.');
+                  return this.doCommitInstance(instance);
+                }
+                return EMPTY;
+              })
             );
           }
           return this.doCommitInstance(instance);

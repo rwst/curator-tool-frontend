@@ -534,6 +534,146 @@ export class InstanceUtilities {
         return shell;
     }
 
+    /**
+     * Copy the attributes shared between a ReferenceGeneProduct (or, historically,
+     * a ReferencePeptideSequence) and an EntityWithAccessionedSequence into the passed
+     * EWAS. This is a TypeScript port of
+     * InstanceUtilities.copyAttributesFromRefPepSeqToEwas in the Java Curator Tool.
+     *
+     * The EWAS is expected to already have its schemaClass populated (e.g. created via
+     * DataService.createNewInstance) so that attribute cardinalities can be honored.
+     * @param ewas the EntityWithAccessionedSequence to fill in
+     * @param refGeneProduct the source ReferenceGeneProduct (fully loaded attributes)
+     */
+    copyAttributesFromRefGeneProductToEwas(ewas: Instance, refGeneProduct: Instance): void {
+        if (!ewas.attributes)
+            ewas.attributes = new Map();
+        const source: Map<string, any> = refGeneProduct.attributes;
+
+        // Helper to set a value honoring the EWAS attribute's cardinality.
+        const setValue = (attributeName: string, value: any) => {
+            const attribute = ewas.schemaClass?.attributes?.find(a => a.name === attributeName);
+            if (!attribute)
+                return; // Not a valid EWAS attribute; skip defensively
+            if (attribute.cardinality === '1')
+                ewas.attributes.set(attributeName, Array.isArray(value) ? value[0] : value);
+            else
+                ewas.attributes.set(attributeName, Array.isArray(value) ? value : [value]);
+        };
+
+        // The EWAS points back to the ReferenceGeneProduct via referenceEntity.
+        setValue('referenceEntity', this.getShellInstance(refGeneProduct));
+
+        // Copy species. On a ReferenceSequence this is single-valued.
+        let species = source?.get('species');
+        if (Array.isArray(species))
+            species = species[0];
+        if (species)
+            setValue('species', this.getShellInstance(species));
+
+        // Build up the list of names from geneName, description, name and secondaryIdentifier.
+        const ewasNames: string[] = [];
+
+        // The first gene name
+        const geneNames: string[] = source?.get('geneName');
+        if (geneNames && geneNames.length > 0)
+            ewasNames.push(geneNames[0]);
+
+        // Name from the description: the text before "(", handling the UniProt
+        // shortName/alternativeName/recommendedName formats.
+        const rawDescription = source?.get('description');
+        let description: string | undefined;
+        if (Array.isArray(rawDescription))
+            description = rawDescription.find(value => typeof value === 'string' && value.trim().length > 0);
+        else if (typeof rawDescription === 'string')
+            description = rawDescription;
+        if (description) {
+            description = description.trim();
+            let index = description.indexOf('(');
+            if (index > 0)
+                description = description.substring(0, index).trim();
+            // Check if the new (03/15/09) format is used
+            let index1 = description.indexOf('shortName');
+            let index2 = description.indexOf('alternativeName');
+            if (index1 > 0 || index2 > 0) {
+                if (index1 < 0)
+                    index1 = description.length;
+                if (index2 < 0)
+                    index2 = description.length;
+                index = Math.min(index1, index2);
+                description = description.substring(0, index).trim();
+            }
+            // Sometimes description starts with "recommendedName"
+            if (description.startsWith('recommendedName'))
+                description = description.substring('recommendedName'.length + 1).trim(); // Remove: recommendedName:
+            if (description.length > 0 && !ewasNames.includes(description))
+                ewasNames.push(description);
+        }
+
+        // The first name
+        const names: string[] = source?.get('name');
+        if (names && names.length > 0) {
+            const name = names[0];
+            if (!ewasNames.includes(name))
+                ewasNames.push(name);
+        }
+
+        // UniProt id from secondaryIdentifier (e.g. something ending in _HUMAN)
+        const ids: string[] = source?.get('secondaryIdentifier');
+        if (ids && ids.length > 0) {
+            const pattern = /_[A-Z]+$/; // Java: _(\p{Upper})+$
+            for (const id of ids) {
+                if (pattern.test(id)) {
+                    if (!ewasNames.includes(id))
+                        ewasNames.push(id);
+                    break;
+                }
+            }
+        }
+
+        setValue('name', ewasNames);
+
+        // Set the start/end coordinates of the EWAS by parsing the ReferenceGeneProduct's
+        // "chain" attribute locally, instead of downloading the UniProt flat file and reading
+        // its "FT   CHAIN" line (the original Java fetchCoordinates approach). The chain values
+        // are stored in the Reactome model as "<featureType>:<start>-<end>" strings; mirroring
+        // the Java logic, we use the first "chain"-typed entry and take its first two integers.
+        // Fall back to a default start of 1 and end of -1 when no chain coordinates are available.
+        const coordinates = this.parseCoordinatesFromChain(source?.get('chain')) ?? [1, -1];
+        setValue('startCoordinate', coordinates[0]);
+        setValue('endCoordinate', coordinates[1]);
+    }
+
+    /**
+     * Parse the start and end coordinates from a ReferenceGeneProduct's "chain" attribute.
+     *
+     * This is the local equivalent of the Java CuratorTool's fetchCoordinates(String), which
+     * downloaded the UniProt flat file and read the first "FT   CHAIN" line, taking the first
+     * two integers on that line as the start and end. Here the same information is already
+     * available on the ReferenceGeneProduct's "chain" attribute (a list of
+     * "<featureType>:<start>-<end>" strings), so no network request is needed.
+     *
+     * @param chain the raw value of the "chain" attribute (array of strings, a single string, or undefined)
+     * @returns a [start, end] tuple, or null if no "chain:"-prefixed entry with two coordinates was found
+     */
+    private parseCoordinatesFromChain(chain: any): [number, number] | null {
+        if (!chain)
+            return null;
+        const entries: string[] = (Array.isArray(chain) ? chain : [chain])
+            .filter(v => typeof v === 'string' && v.trim().length > 0)
+            .map(v => v.trim());
+
+        // Use the first entry beginning with "chain:" (mirroring the Java "FT   CHAIN" filter),
+        // and take its first two integers as the start and end coordinates.
+        const chainEntry = entries.find(entry => entry.toLowerCase().startsWith('chain:'));
+        if (!chainEntry)
+            return null;
+        const nums = (chainEntry.match(/\d+/g) ?? []).map(n => parseInt(n, 10));
+        if (nums.length < 2)
+            return null;
+        return [nums[0], nums[1]];
+    }
+
     private getDynamicAttributeValue(instance: any, attributeName: string): any {
         if (!instance || !instance.attributes)
             return undefined;
@@ -1006,16 +1146,21 @@ export class InstanceUtilities {
                 if (inst.dbId && inst.dbId > 0) {
                     return EMPTY;
                 }
+                const commit$ = dataService.commit(inst).pipe(
+                    tap(rtn => this.processCommit(inst, rtn, dataService)),
+                    map(rtn => this.buildCommitSummaryResults(inst, rtn))
+                );
+                // Run the pre-commit duplication check for new instances (see shouldCheckForMatches).
+                if (!dataService.shouldCheckForMatches(inst)) {
+                    return commit$;
+                }
                 return dataService.matchInstances(inst).pipe(
                     concatMap(matches => {
                         if (matches && matches.length > 0) {
                             matchedGroups.push({ newInstance: inst, matches });
                             return EMPTY;
                         }
-                        return dataService.commit(inst).pipe(
-                            tap(rtn => this.processCommit(inst, rtn, dataService)),
-                            map(rtn => this.buildCommitSummaryResults(inst, rtn))
-                        );
+                        return commit$;
                     })
                 );
             }),
@@ -1025,17 +1170,46 @@ export class InstanceUtilities {
             error: err => console.error('Error committing new instances', err),
             complete: () => {
                 onComplete?.();
-                if (matchedGroups.length > 0) {
-                    this.matchedInstancesDialogService.openDialog({
-                        title: 'Matches Found',
-                        groups: matchedGroups
-                    }).afterClosed().subscribe(() => {
-                        if (results.length > 0) {
-                            this.commitResultDialogService.openDialog(results);
+                if (matchedGroups.length === 0) {
+                    if (results.length > 0) this.commitResultDialogService.openDialog(results);
+                    return;
+                }
+                this.matchedInstancesDialogService.openDialog({
+                    title: 'Matches Found',
+                    groups: matchedGroups
+                }).afterClosed().subscribe((selected?: Instance[]) => {
+                    // The dialog returns display-normalized copies; map back to the
+                    // original held-back instances by dbId so we commit the registered
+                    // objects (not the copies) that the rest of the app tracks.
+                    const selectedDbIds = new Set((selected ?? []).map(inst => inst.dbId));
+                    const toCommit = matchedGroups
+                        .map(group => group.newInstance)
+                        .filter(inst => selectedDbIds.has(inst.dbId));
+
+                    if (toCommit.length === 0) {
+                        if (results.length > 0) this.commitResultDialogService.openDialog(results);
+                        return;
+                    }
+
+                    // Commit the selected new instances that were held back due to matches.
+                    this.openCommitWaitDialog(
+                        'Committing New Instances',
+                        'Please wait while selected new instances are committed one by one.'
+                    );
+                    from(toCommit).pipe(
+                        concatMap(inst => dataService.commit(inst).pipe(
+                            tap(rtn => this.processCommit(inst, rtn, dataService)),
+                            map(rtn => this.buildCommitSummaryResults(inst, rtn))
+                        )),
+                        finalize(() => this.closeCommitWaitDialog())
+                    ).subscribe({
+                        next: resultGroup => results.push(...resultGroup),
+                        error: err => console.error('Error committing matched new instances', err),
+                        complete: () => {
+                            if (results.length > 0) this.commitResultDialogService.openDialog(results);
                         }
                     });
-                }
-                else if (results.length > 0) this.commitResultDialogService.openDialog(results);
+                });
             }
         });
     }

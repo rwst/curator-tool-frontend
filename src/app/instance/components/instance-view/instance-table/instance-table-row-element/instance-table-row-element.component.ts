@@ -36,6 +36,9 @@ export class InstanceTableRowElementComponent implements OnInit {
   @Input() value: any;
   @Input() index: number = -1; // The position for a value in multi-slot
   @Input() blockRoute: boolean = false;
+  // Whether the instance being edited has a populated stableIdentifier. Used to decide whether the
+  // species-edit warning (about the stId/stableIdentifier changing) is relevant.
+  @Input() hasStableIdentifier: boolean = false;
   
   // The following properties and attributes are used for DnD from bookmarks
   private isMouseIn: boolean = false;
@@ -121,6 +124,9 @@ export class InstanceTableRowElementComponent implements OnInit {
 
   private lastContextMenuPosition = { x: 0, y: 0 };
   private skipSpeciesWarning = false;
+  // True while the species warning dialog is open. Keeps the trigger button mounted so its
+  // CdkMenuTrigger instance stays valid for reopening (a destroyed trigger reopens at 0,0).
+  private speciesWarningPending = false;
 
   onContextMenu(event: MouseEvent) {
     this.lastContextMenuPosition = { x: event.x, y: event.y };
@@ -128,11 +134,18 @@ export class InstanceTableRowElementComponent implements OnInit {
 
   onMenuOpened(trigger: CdkContextMenuTrigger | CdkMenuTrigger) {
     this.menuOpen = true;
-    if (this.attribute?.name === 'species') {
+    // Only warn about the stId/stableIdentifier changing when the instance actually has a
+    // stableIdentifier to change.
+    if (this.attribute?.name === 'species' && this.hasStableIdentifier) {
       if (this.skipSpeciesWarning) {
         this.skipSpeciesWarning = false;
         return;
       }
+      // Opening the dialog closes the menu (its backdrop counts as an outside click). Flag the
+      // warning as pending so onMenuClosed/mouseLeave keep the trigger button mounted, otherwise
+      // Angular destroys its CdkMenuTrigger and reopening `trigger` anchors the overlay at (0,0).
+      this.speciesWarningPending = true;
+      this.showActions = true;
       const dialogRef = this.dialog.open(InfoDialogComponent, {
         data: {
           title: 'Warning',
@@ -140,12 +153,16 @@ export class InstanceTableRowElementComponent implements OnInit {
         }
       });
       dialogRef.afterClosed().subscribe(() => {
+        this.speciesWarningPending = false;
         this.skipSpeciesWarning = true;
+        // If the dialog already closed the menu, reopen it now that the warning is acknowledged.
         // CdkContextMenuTrigger opens at a coordinate; CdkMenuTrigger (button) opens relative to itself.
-        if (trigger instanceof CdkContextMenuTrigger)
-          trigger.open(this.lastContextMenuPosition);
-        else
-          trigger.open();
+        if (!trigger.isOpen()) {
+          if (trigger instanceof CdkContextMenuTrigger)
+            trigger.open(this.lastContextMenuPosition);
+          else
+            trigger.open();
+        }
       });
     }
   }
@@ -153,7 +170,8 @@ export class InstanceTableRowElementComponent implements OnInit {
   onMenuClosed() {
     this.menuOpen = false;
     // If the cursor already left the row while the menu was open, hide the action button now.
-    if (!this.isMouseIn)
+    // Keep it while a species warning is pending so the trigger can reopen the menu afterwards.
+    if (!this.isMouseIn && !this.speciesWarningPending)
       this.showActions = false;
   }
 
@@ -193,8 +211,9 @@ export class InstanceTableRowElementComponent implements OnInit {
     this.isMouseIn = false
     this.color = false;
     // Keep the action button (and therefore the open menu) visible while the menu is open.
-    // It will be hidden when the menu closes (see onMenuClosed).
-    if (!this.menuOpen)
+    // It will be hidden when the menu closes (see onMenuClosed). Also keep it during a species
+    // warning so the trigger stays mounted for reopening.
+    if (!this.menuOpen && !this.speciesWarningPending)
       this.showActions = false;
     if (this.isSummationText())
       this.showEditorButton = false;
@@ -262,6 +281,26 @@ export class InstanceTableRowElementComponent implements OnInit {
     if (!isDigit && !isNegativeSign) {
       event.preventDefault();
     }
+  }
+
+  /**
+   * Handle pasting into an integer field (e.g. pubMedIdentifier). Accepts either a bare id or a
+   * link whose id is at the end (e.g. https://pubmed.ncbi.nlm.nih.gov/12345678). Without this, a
+   * pasted URL is left to the native number input, which keeps stray characters such as the "e"
+   * in "pubmed" and produces values like "e12345678".
+   */
+  onIntegerPaste(event: ClipboardEvent) {
+    const pasted = (event.clipboardData?.getData('text') ?? '').trim();
+    if (!pasted || /^-?\d+$/.test(pasted)) {
+      return; // Empty or already a plain integer: let the input handle it
+    }
+    const match = pasted.match(/(\d+)\/?$/); // Trailing digits, tolerating a trailing slash
+    if (!match) {
+      return;
+    }
+    event.preventDefault();
+    this.control.setValue(Number(match[1]));
+    this.onChange();
   }
 
   preventNonFloatInput(event: KeyboardEvent) {

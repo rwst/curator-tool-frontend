@@ -14,6 +14,8 @@
 - improvement: when user is comparing two instances they can turn the comparison mode "off". Then selecting comparison again will use the database version instead of the comparison instance used previously. 
 -bug: check that new pathway diagrams are checked for duplications. currently two users can each create a pathway diagram and commit them creating duplicated pathway diagram instance.
 
+-TODO: Uniprot has changed their xml format, so start and end coordinates must be parsed a different way. Currently we are using ReferenceGeneProducts' existing chain attribute to get coordinates. In the future for new species we will need to update the script for aquiring coordinates from the fetched xml.
+
 #### Deidre
 - bug: The numbers of instances at the new schema view (beta browser) are not updated when new instances are committed. It looks like the counts may be cached at the server app. However, the content of edited instances do get updated.
 - bug: Pick any pathway, add a new reaction in its hasEvent slot view creation, commit the pathway (in the updated list). The new reaction should be committed too (indeed). However, nothing to indicate this: the dialog doesn't show the dbId is updated for this reaction.
@@ -52,8 +54,16 @@ HasMember, HasCandidate, HasComponent, HasComponentForComplex, HasModifiedResidu
 
 - Diagram Locking: In the front-end need to store the diagram (session) lock for a pathway diagram that is in the process of being edited. If/whden the user has the session end due to inacitinactivity, try to get the saved diagram from the back-end using the session id. Back-up edits made every 2.5 minutes periodically. Also back-up current diagram before session time-out. 
 
+- TODO: create an EWAS based on ReferenceGeneProduct, same as the desktop 
+
+- TODO: do a table design for the duplicates and allow the user the option to still commit. 
+
+- Testing of event view, adding a new subpathway etc, use dev env. Create a new event, create a new diagram for event 
+
 
 #### TODO
+- Enable move inner part of the compartment during the pathway diagram editing
+- Change the triangle direction (down -> opened, right -> closed) in the referrers dialog.
 - comments from Eliot and others during a demo on March 16, 2026: https://docs.google.com/document/d/1zlj3KKDwRQYUBCGIi4P3uqsb5X3JRfk8WoOqj2BXssI/edit?tab=t.0#heading=h.y6ik0la1wydu.
 - bug: the layers of compartment are not right now. Some compartments cannot get selected: http://localhost:4200/event_view/instance/157858, inside compartments, caused by the order of plotting compartments. This needs to be fixed.
 - TODO: Set the color of icons in the event tree for dark mode. Right now, they are all black, which cannot be seen in the dark mode.
